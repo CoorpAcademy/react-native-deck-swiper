@@ -36,6 +36,8 @@ const rebuildStackAnimatedValues = (props) => {
 
 class Swiper extends Component {
   static getDerivedStateFromProps (props, state) {
+    const needsRebuild = !state.stackPosition0 || props.stackSize !== state._prevStackSize
+
     return {
       ...state,
       ...calculateCardIndexes(props.cardIndex, props.cards),
@@ -43,7 +45,8 @@ class Swiper extends Component {
       swipedAllCards: false,
       panResponderLocked: props.cards && props.cards.length === 0,
       slideGesture: false,
-      ...rebuildStackAnimatedValues(props)
+      _prevStackSize: props.stackSize,
+      ...(needsRebuild ? rebuildStackAnimatedValues(props) : {})
     }
   }
 
