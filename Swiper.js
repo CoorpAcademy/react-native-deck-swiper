@@ -38,11 +38,14 @@ class Swiper extends Component {
   static getDerivedStateFromProps (props, state) {
     const needsRebuild = !state.stackPosition0 || props.stackSize !== state._prevStackSize
 
+    // Reset swipedAllCards when cardIndex is set back to 0 while all cards were swiped
+    const shouldResetSwipedAll = props.cardIndex === 0 && state.swipedAllCards === true
+
     return {
       ...state,
       ...calculateCardIndexes(props.cardIndex, props.cards),
       cards: props.cards,
-      swipedAllCards: false,
+      swipedAllCards: shouldResetSwipedAll ? false : state.swipedAllCards,
       panResponderLocked: props.cards && props.cards.length === 0,
       slideGesture: false,
       _prevStackSize: props.stackSize,
@@ -71,6 +74,7 @@ class Swiper extends Component {
     this._mounted = true
     this._animatedValueX = 0
     this._animatedValueY = 0
+    this._stackAnimations = [] // Store references to running stack animations
 
     this.state.pan.x.addListener(value => (this._animatedValueX = value.value))
     this.state.pan.y.addListener(value => (this._animatedValueY = value.value))
@@ -105,6 +109,8 @@ class Swiper extends Component {
 
   componentWillUnmount = () => {
     this._mounted = false
+    // Stop all animations on unmount
+    this.stopStackAnimations()
     this.state.pan.x.removeAllListeners()
     this.state.pan.y.removeAllListeners()
     this.dimensionsSubscription?.remove()
@@ -218,13 +224,19 @@ class Swiper extends Component {
       })
     }
 
-    return Animated.event([null, this.createAnimatedEvent()])(
-      event,
-      gestureState
-    )
+    return Animated.event(
+      [null, this.createAnimatedEvent()],
+      { useNativeDriver: false }
+    )(event, gestureState)
   }
 
   onPanResponderGrant = (event, gestureState) => {
+    console.log('🟢 V7 GRANT', {
+      locked: this.state.panResponderLocked,
+      firstCardIndex: this.state.firstCardIndex,
+      animatedValueX: this._animatedValueX,
+      animatedValueY: this._animatedValueY
+    })
     this.props.dragStart && this.props.dragStart()
     if (!this.state.panResponderLocked) {
       this.state.pan.setOffset({
@@ -263,8 +275,17 @@ class Swiper extends Component {
   }
 
   onPanResponderRelease = (e, gestureState) => {
+    console.log('🔴 V7 RELEASE', {
+      locked: this.state.panResponderLocked,
+      firstCardIndex: this.state.firstCardIndex,
+      animatedValueX: this._animatedValueX,
+      animatedValueY: this._animatedValueY,
+      gestureX: gestureState.dx,
+      gestureY: gestureState.dy
+    })
     this.props.dragEnd && this.props.dragEnd()
     if (this.state.panResponderLocked) {
+      console.log('  ❌ V7 Locked - returning')
       this.state.pan.setValue({
         x: 0,
         y: 0
@@ -285,7 +306,17 @@ class Swiper extends Component {
     const isSwiping =
       animatedValueX > horizontalThreshold || animatedValueY > verticalThreshold
 
+    console.log('  🔍 V7 Check swipe', {
+      animatedValueX,
+      animatedValueY,
+      horizontalThreshold,
+      verticalThreshold,
+      isSwiping,
+      validDirection: this.validPanResponderRelease()
+    })
+
     if (isSwiping && this.validPanResponderRelease()) {
+      console.log('  ✅ V7 SWIPING CARD')
       const onSwipeDirectionCallback = this.getOnSwipeDirectionCallback(
         this._animatedValueX,
         this._animatedValueY
@@ -293,6 +324,7 @@ class Swiper extends Component {
 
       this.swipeCard(onSwipeDirectionCallback)
     } else {
+      console.log('  ↩️  V7 RESET TOP CARD')
       this.resetTopCard()
     }
 
@@ -367,7 +399,8 @@ class Swiper extends Component {
     Animated.spring(this.state.pan, {
       toValue: 0,
       friction: this.props.topCardResetAnimationFriction,
-      tension: this.props.topCardResetAnimationTension
+      tension: this.props.topCardResetAnimationTension,
+      useNativeDriver: false
     }).start(cb)
 
     this.state.pan.setOffset({
@@ -439,7 +472,8 @@ class Swiper extends Component {
         x: x * SWIPE_MULTIPLY_FACTOR,
         y: y * SWIPE_MULTIPLY_FACTOR
       },
-      duration: this.props.swipeAnimationDuration
+      duration: this.props.swipeAnimationDuration,
+      useNativeDriver: false
     }).start(() => {
       mustDecrementCardIndex = mustDecrementCardIndex
         ? true
@@ -459,6 +493,18 @@ class Swiper extends Component {
 
   setSwipeBackCardXY = (x = -width, y = 0) => {
     this.setState({swipeBackXYPositions: [...this.state.swipeBackXYPositions, {x, y}]})
+  }
+
+  stopStackAnimations = () => {
+    // Stop all running stack animations
+    if (this._stackAnimations && this._stackAnimations.length > 0) {
+      this._stackAnimations.forEach(animation => {
+        if (animation && animation.stop) {
+          animation.stop()
+        }
+      })
+      this._stackAnimations = []
+    }
   }
 
   animatePreviousCard = ({x, y}, cb) => {
@@ -489,11 +535,16 @@ class Swiper extends Component {
     let { stackSize, infinite, showSecondCard } = this.props
     let index = secondCardIndex
 
+    // Stop previous stack animations before starting new ones
+    this.stopStackAnimations()
+
     while (stackSize-- > 1 && showSecondCard && !swipedAllCards) {
       if (this.state[`stackPosition${stackSize}`] && this.state[`stackScale${stackSize}`]) {
         const newSeparation = this.props.stackSeparation * (stackSize - 1)
         const newScale = (100 - this.props.stackScale * (stackSize - 1)) * 0.01
-        Animated.parallel([
+
+        // Save animation reference so we can stop it later
+        const animation = Animated.parallel([
           Animated.spring(this.state[`stackPosition${stackSize}`], {
             toValue: newSeparation,
             friction: this.props.stackAnimationFriction,
@@ -506,7 +557,9 @@ class Swiper extends Component {
             tension: this.props.stackAnimationTension,
             useNativeDriver: true
           })
-        ]).start()
+        ])
+        animation.start()
+        this._stackAnimations.push(animation)
       }
 
       if (index === cards.length - 1) {
@@ -571,8 +624,8 @@ class Swiper extends Component {
       this.setState(
         {
           ...calculateCardIndexes(newCardIndex, this.state.cards),
-          swipedAllCards: swipedAllCards,
-          panResponderLocked: false
+          swipedAllCards: swipedAllCards
+          // Keep panResponderLocked: true until resetPanAndScale is done
         },
         this.resetPanAndScale
       )
@@ -580,10 +633,61 @@ class Swiper extends Component {
   }
 
   resetPanAndScale = () => {
-    const {previousCardDefaultPositionX, previousCardDefaultPositionY} = this.props
+    const {previousCardDefaultPositionX, previousCardDefaultPositionY, stackSize, stackSeparation, stackScale} = this.props
+
+    console.log('🔧 V8 RESET START')
+
+    // CRITICAL: Stop all stack animations FIRST
+    this.stopStackAnimations()
+
+    // Remove old listeners
+    this.state.pan.x.removeAllListeners()
+    this.state.pan.y.removeAllListeners()
+
+    // Reset tracked values
+    this._animatedValueX = 0
+    this._animatedValueY = 0
+
+    // Reset pan completely (flattenOffset merges offset into value, then we can setValue)
+    this.state.pan.flattenOffset()
     this.state.pan.setValue({ x: 0, y: 0 })
+
+    // Re-add listeners
+    this.state.pan.x.addListener(value => {
+      this._animatedValueX = value.value
+      console.log('📊 V8 X listener', value.value)
+    })
+    this.state.pan.y.addListener(value => {
+      this._animatedValueY = value.value
+      console.log('📊 V8 Y listener', value.value)
+    })
+
+    this.state.previousCardX.stopAnimation()
     this.state.previousCardX.setValue(previousCardDefaultPositionX)
+
+    this.state.previousCardY.stopAnimation()
     this.state.previousCardY.setValue(previousCardDefaultPositionY)
+
+    // Reset stack positions and scales synchronously
+    for (let position = 0; position < stackSize; position++) {
+      if (this.state[`stackPosition${position}`] && this.state[`stackScale${position}`]) {
+        const newSeparation = stackSeparation * position
+        const newScale = (100 - stackScale * position) * 0.01
+
+        this.state[`stackPosition${position}`].stopAnimation()
+        this.state[`stackPosition${position}`].setValue(newSeparation)
+
+        this.state[`stackScale${position}`].stopAnimation()
+        this.state[`stackScale${position}`].setValue(newScale)
+      }
+    }
+
+    console.log('🔧 V8 RESET COMPLETE')
+
+    // NOW unlock the panResponder after everything is reset
+    if (this._mounted) {
+      this.setState({ panResponderLocked: false })
+    }
   }
 
   calculateNextPreviousCardPosition = () => {
@@ -792,8 +896,17 @@ class Swiper extends Component {
     let firstCard = true
     let cardPosition = 0
 
+    console.log('🎴 V9 RENDER STACK', {
+      firstCardIndex,
+      stackSize,
+      showSecondCard,
+      swipedAllCards,
+      totalCards: cards.length
+    })
+
     while (stackSize-- > 0 && (firstCard || showSecondCard) && !swipedAllCards) {
       const key = this.getCardKey(cards[index], index)
+      console.log(`  → V9 Card index=${index} position=${cardPosition} isFirst=${firstCard}`)
       this.pushCardToStack(renderedCards, index, cardPosition, key, firstCard)
 
       firstCard = false
