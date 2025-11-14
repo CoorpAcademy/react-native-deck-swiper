@@ -83,7 +83,8 @@ class Swiper extends Component {
     const { props, state } = this
     const propsChanged = (
       !isEqual(props.cards, nextProps.cards) ||
-      props.cardIndex !== nextProps.cardIndex
+      props.cardIndex !== nextProps.cardIndex ||
+      !isEqual(props.cardStyle, nextProps.cardStyle)
     )
     const stateChanged = (
       nextState.firstCardIndex !== state.firstCardIndex ||
@@ -93,6 +94,13 @@ class Swiper extends Component {
       nextState.swipedAllCards !== state.swipedAllCards
     )
     return propsChanged || stateChanged
+  }
+
+  componentDidUpdate = (prevProps) => {
+    // Update customCardStyle when cardStyle prop changes
+    if (!isEqual(prevProps.cardStyle, this.props.cardStyle)) {
+      this.customCardStyle = this.props.cardStyle
+    }
   }
 
   componentWillUnmount = () => {
@@ -614,12 +622,13 @@ class Swiper extends Component {
       ? this.interpolateCardOpacity()
       : 1
     const rotation = this.interpolateRotation()
+    const { stackSize } = this.props
 
     return [
       styles.card,
       this.cardStyle,
       {
-        zIndex: 1,
+        zIndex: stackSize + 1,
         opacity: opacity,
         transform: [
           { translateX: this.state.pan.x },
@@ -631,28 +640,34 @@ class Swiper extends Component {
     ]
   }
 
-  calculateStackCardZoomStyle = (position) => [
-    styles.card,
-    this.cardStyle,
-    {
-      zIndex: position * -1,
-      transform: [{ scale: this.state[`stackScale${position}`] }, { translateY: this.state[`stackPosition${position}`] }]
-    },
-    this.customCardStyle
-  ]
+  calculateStackCardZoomStyle = (position) => {
+    const { stackSize } = this.props
+    return [
+      styles.card,
+      this.cardStyle,
+      {
+        zIndex: stackSize - position,
+        transform: [{ scale: this.state[`stackScale${position}`] }, { translateY: this.state[`stackPosition${position}`] }]
+      },
+      this.customCardStyle
+    ]
+  }
 
-  calculateSwipeBackCardStyle = () => [
-    styles.card,
-    this.cardStyle,
-    {
-      zIndex: 4,
-      transform: [
-        { translateX: this.state.previousCardX },
-        { translateY: this.state.previousCardY }
-      ]
-    },
-    this.customCardStyle
-  ]
+  calculateSwipeBackCardStyle = () => {
+    const { stackSize } = this.props
+    return [
+      styles.card,
+      this.cardStyle,
+      {
+        zIndex: stackSize + 2,
+        transform: [
+          { translateX: this.state.previousCardX },
+          { translateY: this.state.previousCardY }
+        ]
+      },
+      this.customCardStyle
+    ]
+  }
 
   interpolateCardOpacity = () => {
     const animatedValueX = Math.abs(this._animatedValueX)
@@ -726,11 +741,11 @@ class Swiper extends Component {
     const { childrenOnTop, children, stackSize, showSecondCard } = this.props
 
     let zIndex = (stackSize && showSecondCard)
-      ? stackSize * -1
+      ? 0
       : 1
 
     if (childrenOnTop) {
-      zIndex = 5
+      zIndex = stackSize + 10
     }
 
     return (
