@@ -41,12 +41,18 @@ class Swiper extends Component {
     // Reset swipedAllCards when cardIndex is set back to 0 while all cards were swiped
     const shouldResetSwipedAll = props.cardIndex === 0 && state.swipedAllCards === true
 
+    // Check if cards became empty (need to lock) or became non-empty (can unlock if not swiping)
+    const noCards = !props.cards || props.cards.length === 0
+    const hadCards = state.cards && state.cards.length > 0
+    const cardsJustBecameEmpty = noCards && hadCards
+
     return {
       ...state,
       ...calculateCardIndexes(props.cardIndex, props.cards),
       cards: props.cards,
       swipedAllCards: shouldResetSwipedAll ? false : state.swipedAllCards,
-      panResponderLocked: props.cards && props.cards.length === 0,
+      // Only force lock when cards just became empty; never unlock here (let resetPanAndScale handle it)
+      panResponderLocked: cardsJustBecameEmpty ? true : state.panResponderLocked,
       slideGesture: false,
       _prevStackSize: props.stackSize,
       ...(needsRebuild ? rebuildStackAnimatedValues(props) : {})
@@ -63,7 +69,7 @@ class Swiper extends Component {
       previousCardX: new Animated.Value(props.previousCardDefaultPositionX),
       previousCardY: new Animated.Value(props.previousCardDefaultPositionY),
       swipedAllCards: false,
-      panResponderLocked: false,
+      panResponderLocked: !props.cards || props.cards.length === 0,
       labelType: LABEL_TYPES.NONE,
       slideGesture: false,
       swipeBackXYPositions: [],
